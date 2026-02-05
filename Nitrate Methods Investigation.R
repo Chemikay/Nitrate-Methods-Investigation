@@ -1,6 +1,6 @@
 #####################################################
 # Nitrate Methods Investigation
-# By: Katey Rein 
+# By: Katey Rein
 #     DWR Quality Assurance Unit
 
 #####################################################
@@ -37,7 +37,7 @@ dset8<- clean_names(dset8)
 
 
 #####################################################
-### Format and manipulate WDL and Lab data 
+### Format and manipulate WDL and Lab data
 #####################################################
 
 names(dset1)
@@ -81,9 +81,9 @@ dset8a <- select(dset8, long_station_name, short_station_name,
                  station_number, sample_code, collection_date, analyte, result, rpt_limit,
                  units, method, sample_type, description, notes)
 
-#data_owner and data_status don't exist for any dsets other than dset1 
+#data_owner and data_status don't exist for any dsets other than dset1
 
-#for now, don't worry about filling this in. 
+#for now, don't worry about filling this in.
 
 dset1a <- select(dset1, long_station_name, short_station_name,
                  station_number, sample_code, collection_date, analyte, result, rpt_limit,
@@ -113,7 +113,7 @@ class(data_bound1$collection_date)
 
 
 data_bound2 <- mutate(data_bound1, result = as.numeric(result))
-#NAs introduced by coersion but not an issue for this purpose. 
+#NAs introduced by coersion but not an issue for this purpose.
 
 unique(data_bound2$analyte)
 #two nitrate analytes
@@ -173,7 +173,7 @@ unique(method_4500_DWR$units)
 #just mg/L as N
 
 unique(method_4500$units)
-#just mg/L as N 
+#just mg/L as N
 
 #create breakdown of method 353.2 units by date range of usage
 unit_ranges_353.2 <- method_353.2 %>%
@@ -201,55 +201,116 @@ names(dpaired)
 class(dpaired$result_diss_nitrate)
 
 dpaired_nitrate_adj <- dpaired %>%
-  mutate(nitrate_as_N = result_diss_nitrate / 4.3)
+  mutate(
+    date = ymd(date),
+    date_time = ymd_hms(date_time),
+    nitrate_as_N = result_diss_nitrate / 4.3
+  )
 
 #data visualization
 ggplot(dpaired_nitrate_adj, aes(x = date)) +
   geom_line(aes(y = result_diss_nitrate, color = "Dissolve Nitrate as NO3"), linewidth = 1) +
   geom_line(aes(y = nitrate_as_N, color = "Dissolve Nitrate as N"), linewidth = 1) +
   geom_line(aes(y = result_diss_nitrate_nitrite, color = "Dissolve Nitrate+Nitrite as N"), linewidth = 1) +
-  scale_color_manual(values = c("Dissolve Nitrate as NO3" = "#1f77b4", "Dissolve Nitrate as N" = "#d62728", 
+  scale_color_manual(values = c("Dissolve Nitrate as NO3" = "#1f77b4", "Dissolve Nitrate as N" = "#d62728",
   "Dissolve Nitrate+Nitrite as N" = "#9467bd")) +
   labs(x = "Date", y = "Value", color = "Legend", title = "Overlay of Nitrate Results")
-       
 
+# geom_line doesn't seem like the right way to plot this, I changed it to geom_point
 ggplot(dpaired_nitrate_adj, aes(x = station_number)) +
-  geom_line(aes(y = result_diss_nitrate, color = "Dissolve Nitrate as NO3"), linewidth = 1) +
-  geom_line(aes(y = nitrate_as_N, color = "Dissolve Nitrate as N"), linewidth = 1) +
-  geom_line(aes(y = result_diss_nitrate_nitrite, color = "Dissolve Nitrate+Nitrite as N"), linewidth = 1) +
-  scale_color_manual(values = c("Dissolve Nitrate as NO3" = "#1f77b4", "Dissolve Nitrate as N" = "#d62728", 
-                                "Dissolve Nitrate+Nitrite as N" = "#9467bd")) +
-  labs(x = "Station Number", y = "Value", color = "Legend", title = "Overlay of Nitrate Results")
+  geom_point(
+    aes(
+      y = result_diss_nitrate,
+      color = "Dissolve Nitrate as NO3"
+    ),
+    alpha = 0.5
+  ) +
+  geom_point(
+    aes(
+      y = nitrate_as_N,
+      color = "Dissolve Nitrate as N"
+    ),
+    alpha = 0.5
+  ) +
+  geom_point(
+    aes(
+      y = result_diss_nitrate_nitrite,
+      color = "Dissolve Nitrate+Nitrite as N"
+    ),
+    alpha = 0.5
+  ) +
+  scale_color_manual(
+    values = c(
+      "Dissolve Nitrate as NO3" = "#1f77b4",
+      "Dissolve Nitrate as N" = "#d62728",
+      "Dissolve Nitrate+Nitrite as N" = "#9467bd"
+    )
+  ) +
+  labs(
+    x = "Station Number",
+    y = "Value",
+    color = "Legend",
+    title = "Overlay of Nitrate Results"
+  )
 
-
-
-dpaired_nitrate_adj <- dpaired_nitrate_adj %>%
+dpaired_nitrate_adj_c <- dpaired_nitrate_adj %>%
+  # Remove rows where dissolved nitrate values are <RL
+  drop_na(result_diss_nitrate) %>%
+  # Replace dissolved nitrate + nitrite values that are <RL with their RL values
+  # to get a coarse idea of how they compare to the dissolved nitrate values
+  mutate(
+    result_diss_nitrate_nitrite = if_else(
+      detection_condition_diss_nitrate_nitrite == "Not Detected",
+      reporting_limit_diss_nitrate_nitrite,
+      result_diss_nitrate_nitrite
+    )
+  ) %>%
+  # Added some new categories here to differentiate N+N values <RL
   mutate(
     less_flag_new = case_when(
-      nitrate_as_N < result_diss_nitrate_nitrite ~ "less",
-      TRUE ~ "not less"),
-    less_flag_orig = case_when(result_diss_nitrate <result_diss_nitrate_nitrite ~"less",
-                               TRUE ~"not less"))
-  
-nitrate_as_n_summary <- dpaired_nitrate_adj %>%
-  group_by(less_flag_new) %>%
-  summarize(
-    n_records  = n(),
-    .groups = "drop"
+      nitrate_as_N <= result_diss_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "less",
+      nitrate_as_N <= result_diss_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+          "Not Detected" ~ "less (using RL for N+N)",
+      nitrate_as_N > result_diss_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "not less",
+      nitrate_as_N > result_diss_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+          "Not Detected" ~ "not less (using RL for N+N)",
+      .default = NA_character_
+    ),
+    less_flag_orig = case_when(
+      result_diss_nitrate <= result_diss_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "less",
+      result_diss_nitrate <= result_diss_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+          "Not Detected" ~ "less (using RL for N+N)",
+      result_diss_nitrate > result_diss_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "not less",
+      result_diss_nitrate > result_diss_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+          "Not Detected" ~ "not less (using RL for N+N)",
+      .default = NA_character_
+    )
   )
 
-#With the adjusted nitrate values (to report as N), 
-#now 4509 of 6730 samples have a higher value for nitrate than for nitrate + nitrite, 
-#so 2221 still show that unexpected relationship.
+nitrate_as_n_summary <- dpaired_nitrate_adj_c %>%
+  count(less_flag_new, name = "n_records")
 
-nitrate_as_n03_summary <- dpaired_nitrate_adj %>%
-  group_by(less_flag_orig) %>%
-  summarize(
-    n_records  = n(),
-    .groups = "drop"
-  )
-#With the original nitrate values when compared to their nitrate +nitrite counterparts, 
-#6722 out of 6730 samples had a higher value for nitrate than for nitrate + nitrite 
+nitrate_as_n_summary
+
+# With the adjusted nitrate values (to report as N),
+# now 3435 of 5743 samples have a higher value for nitrate than for nitrate + nitrite,
+# so 2308 show the expected relationship of nitrate + nitrite >= nitrate
+
+nitrate_as_n03_summary <- dpaired_nitrate_adj_c %>%
+  count(less_flag_orig, name = "n_records")
+
+nitrate_as_n03_summary
+
+# With the original nitrate values when compared to their nitrate + nitrite counterparts,
+# 5735 out of 5743 samples had a higher value for nitrate than for nitrate + nitrite
 
 
 
@@ -267,5 +328,3 @@ method_300 <- method_300 %>%
 
 
 #look at data affected by being reported out as NO3 rather than N, AKA non-detects vs reported concentration
-
-
