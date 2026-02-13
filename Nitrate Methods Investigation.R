@@ -527,6 +527,23 @@ ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
     y = "Sample Count"
   )
 
+#visualize over concentration
+ggplot(dpaired_kr4, aes(x = nitrate_as_N)) +
+  geom_freqpoly()+
+  labs(
+    title = "Frequency of total paired samples by concentration",
+    x = "Nitrate as N",
+    y = "Sample Count"
+  )
+
+ggplot(nitrate_as_n_kr_higher, aes(x = nitrate_as_N)) +
+  geom_freqpoly()+
+  labs(
+    title = "Frequency of paired sample submissions by concentration where nitrate as n higher",
+    x = "Nitrate as N",
+    y = "Sample Count"
+  )
+
 
 # plot nitrate as n, still higher
 ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
