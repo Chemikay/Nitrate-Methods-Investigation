@@ -112,7 +112,7 @@ data_bound1 <- mutate(data_bound, collection_date = as.Date(collection_date, for
 class(data_bound1$collection_date)
 
 
-data_bound2 <- mutate(data_bound1, result = as.numeric(result))
+#data_bound2 <- mutate(data_bound1, result = as.numeric(result))
 #NAs introduced by coersion but not an issue for this purpose.
 
 unique(data_bound2$analyte)
@@ -204,7 +204,8 @@ dpaired_nitrate_adj <- dpaired %>%
   mutate(
     date = ymd(date),
     date_time = ymd_hms(date_time),
-    nitrate_as_N = result_diss_nitrate / 4.3
+    nitrate_as_N = result_diss_nitrate / 4.3,
+    nitrate_RL_as_N = reporting_limit_diss_nitrate / 4.3
   )
 
 #data visualization
@@ -338,7 +339,7 @@ unique(data_bound1$analyte)
 data_bound2 <- filter(data_bound1, analyte == "Dissolved Nitrate + Nitrite" | analyte == "Dissolved Nitrate" )
 
 # Look for duplicates using analyte, sample code, and collection date as unique identifiers
-r = data_bound3 %>% 
+r = data_bound2 %>% 
   count(sample_code, collection_date, analyte) %>% 
   filter(n > 1)
 #2104 duplicates
@@ -373,7 +374,8 @@ data_bound_wide3 <- data_bound_wide2 %>%
   drop_na(result_dissolved_nitrate_nitrite)
 
 dpaired_kr <- data_bound_wide3 %>%
-  mutate(nitrate_as_N = result_dissolved_nitrate / 4.3)
+  mutate(nitrate_as_N = result_dissolved_nitrate / 4.3,
+         nitrate_RL_as_N = rpt_limit_dissolved_nitrate / 4.3)
 
 #evaluate data pairs (from scratch) by applying the flags as done for dpaired data
 
@@ -387,7 +389,7 @@ dpaired_kr2 <- dpaired_kr %>%
 dpaired_kr3 <- dpaired_kr2 %>%
   mutate(
     detection_condition_diss_nitrate_adj= 
-      if_else(nitrate_as_N > rpt_limit_dissolved_nitrate, "Detected",
+      if_else(nitrate_as_N > nitrate_RL_as_N, "Detected",
               "Not Detected"))
   
 dpaired_kr4<- dpaired_kr3 %>%
@@ -581,5 +583,159 @@ ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
     color = "Legend",
     title = "Overlay of Nitrate Results, where Nitrate as N > N+N"
   )
+
+#absolute difference calculation
+
+nitrate_as_n_kr_higher_ad <- nitrate_as_n_kr_higher %>%
+  mutate(
+    absolute_diff = 
+      nitrate_as_N - result_dissolved_nitrate_nitrite)
+
+#nitrate+nitrite data have two different reporting limits, separate data by RL
+
+ad_nn1 <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate_nitrite == "0.05" )
+#475 samples
+
+ad_nn2 <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate_nitrite == "0.01" )
+#3578 samples
+
+#diff on y axis, nitrate nitrite result on x axis
+a <- ggplot(ad_nn1, aes(x = result_dissolved_nitrate_nitrite)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+          ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = rpt_limit_dissolved_nitrate_nitrite))+
+  labs(
+    x = "Result N+N",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (N+N RL = 0.05 as N)"
+  )+
+  xlim(0, 1)+
+  ylim(0,0.25)
+#axis limits remove 42 data points
+
+a
+
+b <- ggplot(ad_nn2, aes(x = result_dissolved_nitrate_nitrite)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = rpt_limit_dissolved_nitrate_nitrite))+
+  labs(
+    x = "Result N+N",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (N+N RL = 0.01 as N)"
+  )+
+  xlim(0,2)+
+  ylim(0,1)
+b
+#axis limits remove 60 data points
+
+
+#********************************************
+
+
+#summarize nitrate RLs, 
+nitrate_summary_RL <- nitrate_as_n_kr_higher_ad %>%
+  group_by(nitrate_RL_as_N) %>%
+  summarize(
+    first_used = min(collection_date, na.rm = TRUE),
+    last_used  = max(collection_date, na.rm = TRUE),
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+
+#nitrate_RL_as_N first_used last_used  n_records
+#<dbl> <date>     <date>         <int>
+#1          0.0233 2010-01-04 2024-06-26      3743
+#2          0.0465 2012-03-05 2018-12-17         8
+#3          0.0581 2010-10-05 2015-02-17        12
+#4          0.0698 2013-08-19 2023-11-21         7
+#5          0.0774 2010-01-05 2010-09-07        18
+#6          0.0872 2023-04-17 2023-04-17         1
+#7          0.116  2010-01-05 2024-03-19       158
+#8          0.174  2022-11-14 2024-02-20         9
+#9          0.233  2011-08-02 2024-04-17        61
+#10          0.349  2014-07-21 2018-02-20         3
+#11          0.465  2011-10-06 2015-10-21        19
+#12          0.581  2010-07-06 2018-06-05         8
+#13          1.16   2011-11-07 2018-08-20         3
+#14         NA      2018-03-27 2018-03-27         3
+
+  
+#having issues with pulling in based on adjusted nitrate RL for some reason
+#may be due to very long numerical sequence and truncation
+#pulling in based on nitrate RL original (as NO3)
+
+ad_no3a <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate == "0.1" )
+#3743 samples
+
+ad_no3b <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate == "0.5")
+#158 samples
+
+ad_no3c <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate == "1")
+#61 samples
+
+
+#diff on y axis, nitrate (as N) result on x axis
+c <- ggplot(ad_no3a, aes(x = nitrate_as_N)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = nitrate_RL_as_N))+
+  labs(
+    x = "Result Nitrate (as N)",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.023 as N)"
+  )+
+  xlim(0,2)+
+  ylim(0,1)
+
+c 
+#axis limits remove 75 data points
+
+#diff on y axis, nitrate (as N) result on x axis
+d <- ggplot(ad_no3b, aes(x = nitrate_as_N)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = nitrate_RL_as_N))+
+  labs(
+    x = "Result Nitrate (as N)",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.11 as N)"
+  )+
+  xlim(0,2)+
+  ylim(0,0.5)
+
+
+d
+#axis limits remove 15 data points
+
+
+#diff on y axis, nitrate (as N) result on x axis
+e <- ggplot(ad_no3c, aes(x = nitrate_as_N)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = nitrate_RL_as_N))+
+  labs(
+    x = "Result Nitrate (as N)",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.23 as N)"
+  )
+
+e + scale_x_continuous(breaks = seq(0, 4, by = 0.25))
 
 
