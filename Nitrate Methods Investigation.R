@@ -1,6 +1,6 @@
 #####################################################
 # Nitrate Methods Investigation
-# By: Katey Rein
+# By: Katey Rein &  Taylor Rohlin
 #     DWR Quality Assurance Unit
 
 #####################################################
@@ -34,6 +34,22 @@ dset5<- clean_names(dset5)
 dset6<- clean_names(dset6)
 dset7<- clean_names(dset7)
 dset8<- clean_names(dset8)
+
+#make small function to remove duplicates for TKN analysis
+remove_dups <- function(df) {
+  df %>% filter(is.na(lab_dup) | lab_dup != "Y")
+}
+
+#apply function to data sets
+dset1 <- remove_dups(dset1)
+dset2 <- remove_dups(dset2)
+dset3 <- remove_dups(dset3)
+dset4 <- remove_dups(dset4)
+dset5 <- remove_dups(dset5)
+dset6 <- remove_dups(dset6)
+dset7 <- remove_dups(dset7)
+dset8 <- remove_dups(dset8)
+
 
 
 #####################################################
@@ -112,6 +128,8 @@ data_bound1 <- mutate(data_bound, collection_date = as.Date(collection_date, for
 class(data_bound1$collection_date)
 
 
+data_bound2 <- mutate(data_bound1, result = as.numeric(result))
+#NAs introduced by coersion but not an issue for this purpose.values were either under RL, N.S. or blank in data_bound1
 #data_bound2 <- mutate(data_bound1, result = as.numeric(result))
 #NAs introduced by coersion but not an issue for this purpose.
 
@@ -120,7 +138,8 @@ unique(data_bound2$analyte)
 
 #filter out other analytes
 
-data_bound_nitrate <- filter(data_bound1, analyte == "Dissolved Nitrate" | analyte == "Dissolved Nitrate + Nitrite")
+data_bound_nitrate <- filter(data_bound2, analyte == "Dissolved Nitrate" | analyte == "Dissolved Nitrate + Nitrite" | analyte == "Total Kjeldahl Nitrogen")
+
 
 unique(data_bound_nitrate$method)
 #five different methods
@@ -739,3 +758,181 @@ e <- ggplot(ad_no3c, aes(x = nitrate_as_N)) +
 e + scale_x_continuous(breaks = seq(0, 4, by = 0.25))
 
 
+#look at data affected by being reported out as NO3 rather than N, AKA non-detects vs reported concentration
+
+
+################################################################################
+### Total nitrogen via tkn analysis
+################################################################################
+
+                ################
+                ###data prep 
+                ################
+
+#group samples together and put in chronological order
+df1 <- data_bound_nitrate %>%
+  arrange(collection_date) %>%
+  group_by(short_station_name, station_number, sample_code, collection_date)
+
+#change any result values that are below reporting limit to NA. then remove any NA records.
+df2 <- df1 %>%
+  mutate(result = if_else(result < rpt_limit, NA_real_, result)) %>%
+  filter(!is.na(result))
+
+#retain samples that use tkn and are "normal samples" 
+tkn <- df2 %>%
+  ungroup() %>%
+  filter(
+    any(analyte == "Total Kjeldahl Nitrogen" &
+          sample_type == "Normal Sample"),
+    .by = c(station_number, collection_date)
+  ) %>%
+  filter(sample_type == "Normal Sample")
+
+#specify required analytes
+required_analytes <- c(
+  "Dissolved Nitrate + Nitrite",
+  "Total Kjeldahl Nitrogen",
+  "Dissolved Nitrate"
+)
+
+
+
+#new df that retains just the required analytes for this analysis
+tkn2 <- tkn %>%
+  group_by(short_station_name, station_number, sample_code, collection_date) %>% #grouping by sample, so three analytes/rows per sample
+  filter(all(required_analytes %in% analyte)) %>% 
+  ungroup() %>%
+  filter(analyte %in% required_analytes) 
+
+#double check the numbers, should be 3 analytes per sample. anything extra needs to be reviewed
+tkn2 %>%
+  count(short_station_name, station_number, sample_code, collection_date) %>%
+  filter(n != 3) 
+#129 records
+
+#create list of sample specific analyte duplicates 
+dupes <- tkn2 %>%
+  group_by(short_station_name, station_number, sample_code, collection_date, analyte) %>%
+  filter(n() > 1) 
+#363 records
+
+#create df of duplicates with == result values
+matching_dupes <- dupes %>%
+  group_by(short_station_name, station_number, sample_code, collection_date, analyte) %>%
+  filter(n_distinct(result) == 1)
+#283 records 
+
+#examine the odd pairing in matching samples
+unpaired <- matching_dupes %>%
+  count(sample_code) %>%        
+  filter(n %% 2 == 1)           
+#sample CR0712B0939 has three dissolved nitrate records, all with the same value. no problem.
+
+#create df of duplicates with not exactly matching result values
+nonmatching_dupes <- dupes %>%
+  group_by(short_station_name, station_number, sample_code, collection_date, analyte) %>%
+  filter(n_distinct(result) > 1)
+#80 records -___-
+
+#create sample keys for nonmatching duplicates
+non_keys <- nonmatching_dupes %>%
+  distinct(short_station_name, station_number, sample_code, collection_date)
+
+#remove samples associated with nonmatching dupes
+tkn3 <- tkn2 %>%
+  anti_join(non_keys,
+            by = c("short_station_name", "station_number", "sample_code", "collection_date"))
+
+#keep one record per analyte dupe of the dupes that match
+matching_dupes2 <- matching_dupes %>%
+  group_by(short_station_name, station_number, sample_code, collection_date, analyte) %>%
+  slice(1) %>%   
+  ungroup()
+
+#remove original dupe records
+tkn_no_dupes <- tkn3 %>%
+  anti_join(dupes,
+            by = c("short_station_name", "station_number", "sample_code", "collection_date", "analyte"))
+
+#add back in the reduced matching dupes
+tkn4 <- bind_rows(tkn_no_dupes, matching_dupes2) %>%
+  arrange(short_station_name, station_number, collection_date, analyte)
+
+#confirm only 3 analytes per sample
+tkn4 %>%
+  count(short_station_name, station_number, sample_code, collection_date) %>%
+  filter(n != 3) #two samples that had both matching and non matching dupes slipped through the cracks
+
+#retain records with only the 3 analytes per sample.
+tkn5 <- tkn4 %>%
+  group_by(sample_code, collection_date) %>%
+  filter(n() == 3) %>%
+  ungroup()
+
+###########
+# the process above omits nonmatching duplicates(40) and their associated samples from this analysis.
+# I did this because I am short on time and the number of samples was negligible (about 300 records ~ 100 samples) :')
+# so roughly 5,463 samples to run the total nitrogen using tkn analysis.
+###########
+
+#data collected under EPA method 300 will be divided by a conversion factor of 4.3
+#this new value will be placed in a new column called result_convert and data outside of the 300 method
+#will retain their result values and be transferred to result_convert as is.
+tkn5 <- tkn5 %>%
+  mutate(
+    result_convert = case_when(
+      method %in% c("EPA 300.0 [1]*", "EPA 300.0 28d Hold [1]*") ~ result / 4.3,
+      TRUE ~ result
+    ),
+    result_convert = round(result_convert, 3) #three decimal places
+  ) %>%
+  relocate(result_convert, .after = result)
+
+
+#make a wide version
+tkn_wide <- tkn5 %>%
+  select(
+    station_number,
+    short_station_name,
+    collection_date,
+    sample_code,
+    analyte,
+    result_convert
+  ) %>%
+  pivot_wider(
+    names_from = analyte,
+    values_from = result_convert
+  )
+#clean names
+tkn_wide <- tkn_wide %>%
+  janitor::clean_names()
+
+#calculate total nitrogen, create comparison (tn_vs_nox) column & difference column
+tkn_wide <- tkn_wide %>%
+  mutate(
+    total_nitrogen = dissolved_total_kjeldahl_nitrogen +
+      dissolved_nitrate_nitrite,
+    tn_vs_nox = case_when(
+      total_nitrogen > dissolved_nitrate ~ "greater",
+      total_nitrogen < dissolved_nitrate ~ "less",
+      total_nitrogen == dissolved_nitrate ~ "equal",
+      TRUE ~ NA_character_
+    ),
+    difference = total_nitrogen - dissolved_nitrate
+  )
+#summary
+tkn_wide %>%
+  count(tn_vs_nox)
+# greater      5411
+# less           50
+# equal           2
+
+# so after dividing relevant samples by a 4.3 conversion factor and then calculating total nitrogen (tkn +(n03 +n02))
+# majority (5411) of samples had a calculated total nitrogen value that was greater than the dissolved nitrate value
+# 50 samples had a calculated total nitrogen value that was less than the dissolved nitrate value
+# 2 samples had equal values
+
+
+#export to share 
+write.csv(tkn_wide, "tkn_wide.csv", row.names = FALSE)
