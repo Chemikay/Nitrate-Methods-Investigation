@@ -1,5 +1,5 @@
 #####################################################
-# Nitrate Methods Investigation
+# Nitrate Methods Investigation - validated data
 # By: Katey Rein &  Taylor Rohlin
 #     DWR Quality Assurance Unit
 
