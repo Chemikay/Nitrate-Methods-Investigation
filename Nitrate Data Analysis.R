@@ -669,6 +669,156 @@ nitrate_summary_RL <- nitrate_as_n_higher %>%
 
 
 
+
+
+################################################################################
+### Analyze the data - differences between Nitrate+Nitrite & NO3
+################################################################################
+
+######absolute difference calculation, using max values
+
+npair_max1_ad <- npair_max1%>%
+  mutate(
+    absolute_diff = 
+      nitrate_as_N - result_dissolved_nitrate_nitrite)
+
+unique(npair_max1_ad$rpt_limit_dissolved_nitrate_nitrite)
+
+#summarize nitrate + nitrite RLs, 
+nitrate_nitrite_rl_summary <- npair_max1_ad %>%
+  group_by(rpt_limit_dissolved_nitrate_nitrite) %>%
+  summarize(
+    first_used = min(collection_date, na.rm = TRUE),
+    last_used  = max(collection_date, na.rm = TRUE),
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+#nitrate+nitrite data have five different reporting limits, mostly just two though. 
+#separate data by RL
+
+npair_max1_ad_rl1 <- filter(npair_max1_ad, rpt_limit_dissolved_nitrate_nitrite == "0.05" )
+#1351 samples
+
+npair_max1_ad_rl2 <- filter(npair_max1_ad, rpt_limit_dissolved_nitrate_nitrite == "0.01" )
+#4258 samples
+
+#diff on y axis, nitrate nitrite result on x axis
+a <- ggplot(npair_max1_ad_rl1, aes(x = result_dissolved_nitrate_nitrite)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = rpt_limit_dissolved_nitrate_nitrite))+
+  labs(
+    x = "Result N+N",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (N+N RL = 0.05 as N)"
+  )+
+  xlim(0, 2)+
+  ylim(0,0.5)
+#some data excluded, likely due to absolute differences of zero since this is the max df
+
+a
+
+b <- ggplot(npair_max1_ad_rl2, aes(x = result_dissolved_nitrate_nitrite)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = rpt_limit_dissolved_nitrate_nitrite))+
+  labs(
+    x = "Result N+N",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (N+N RL = 0.01 as N)"
+  )+
+  xlim(0,2)+
+  ylim(0,1)
+b
+#some data excluded, likely due to absolute differences of zero since this is the max df
+
+#having issues with pulling in based on adjusted nitrate RL for some reason
+#may be due to very long numerical sequence and truncation
+#pulling in based on nitrate RL original (as NO3)
+
+npair_max1_ad__nitrate_rl1 <- filter(npair_max1_ad, rpt_limit_dissolved_nitrate == "0.1" )
+#5042 samples
+
+npair_max1_ad__nitrate_rl2<- filter(npair_max1_ad, rpt_limit_dissolved_nitrate == "0.5")
+#246 samples
+
+npair_max1_ad__nitrate_rl3 <- filter(npair_max1_ad, rpt_limit_dissolved_nitrate == "1")
+#166 samples
+
+
+#diff on y axis, nitrate (as N) result on x axis
+c <- ggplot(npair_max1_ad__nitrate_rl1, aes(x = nitrate_as_N)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = nitrate_RL_as_N))+
+  labs(
+    x = "Result Nitrate (as N)",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.023 as N)"
+  )+
+  xlim(0,2)+
+  ylim(0,1)
+
+c 
+#some data excluded, likely due to absolute differences of zero since this is the max df
+
+#diff on y axis, nitrate (as N) result on x axis
+d <- ggplot(npair_max1_ad__nitrate_rl2, aes(x = nitrate_as_N)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = nitrate_RL_as_N))+
+  labs(
+    x = "Result Nitrate (as N)",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.11 as N)"
+  )+
+  xlim(0,2)+
+  ylim(0,0.5)
+
+
+d
+#some data excluded, likely due to absolute differences of zero since this is the max df
+
+
+#diff on y axis, nitrate (as N) result on x axis
+e <- ggplot(npair_max1_ad__nitrate_rl3, aes(x = nitrate_as_N)) +
+  geom_point(
+    aes(
+      y = absolute_diff,
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = nitrate_RL_as_N))+
+  labs(
+    x = "Result Nitrate (as N)",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.23 as N)"
+  )
+
+e + scale_x_continuous(breaks = seq(0, 4, by = 0.25))
+#some data excluded, likely due to absolute differences of zero since this is the max df
+
+######relative percent difference calculation, using max values
+
+# perform RPD calculation
+
+
+
+npair_max1_rpd  <- npair_max1 %>% 
+  mutate(rpd =  100 * ((nitrate_as_N - result_dissolved_nitrate_nitrite) / ((nitrate_as_N + result_dissolved_nitrate_nitrite) / 2)))
+
 ################################################################################
 ### Total nitrogen via tkn + (nitrate + nitrite) analysis
 ################################################################################
