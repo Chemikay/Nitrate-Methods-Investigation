@@ -475,8 +475,6 @@ nitrate_as_no3_nd_summary<- npair_nd1 %>%
 #only 8 samples show expected relationship (~0.01%)
 
 
-######left off here 3/3/2026
-
 #parse out these specific data with adjusted nitrate values (to report as N) that are still higher into new df
 #use df with nds removed
 
