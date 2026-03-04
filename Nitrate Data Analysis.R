@@ -111,7 +111,7 @@ data_bound <- bind_rows(dset1a, dset2a, dset3a, dset4a, dset5a, dset6a, dset7a, 
 
 
 #####################################################
-### Analyze data
+### Validate data for analysis
 #####################################################
 
 str(data_bound)
@@ -129,7 +129,7 @@ class(data_bound1$collection_date)
 
 #remove rows with a blank result
 data_bound1a <- filter(data_bound1, result != "")
-#removes 20 rows
+#removes 14 rows
 
 #remove rows with data not sampled (AKA N.S.)
 data_bound1b <- filter(data_bound1a, result != "N.S.")
@@ -219,11 +219,11 @@ data_bound1i <- filter(data_bound1h, sample_code != "S1223B0456" &
                          sample_code != "OR1223B0160"&
                          sample_code != "OR1223B0159"&
                          sample_code != "OR1223B0158")
-#removed 6 rows, correct
+#removed 36 rows (6 rows for these samples with nitrate, plus the other data for these samples), correct
 
 
 #evaluated all data identified as subbed to TestAmerica (subcontractor), none 
-#is nitrate data (N+N and other nutrients only), so no concerns over unit inconsistency
+#are nitrate data (N+N and other nutrients only), so no concerns over unit inconsistency
 
 #remove irrelevant analytes
 data_bound2 <- filter(data_bound1i, analyte == "Dissolved Nitrate" | analyte == "Dissolved Nitrate + Nitrite" | 
@@ -241,16 +241,24 @@ data_bound2$result[data_bound2$result=="< MDL, MDL = 0.10"]<-"<0.10"
 data_bound2$result[data_bound2$result=="< R.L. 0.1"]<-"<0.1"
 
 
-#remove the two rows with result = "<0"
-data_bound3 <- filter(data_bound2, result != "<0")
+#remove the two rows with result = "<0" or "0"
+data_bound3 <- filter(data_bound2, result != "<0" & result != "0")
 
-#removed 2 rows, correct
+#removed 7 rows, correct
 
-#make results numeric class, remove "<" to assume highest possible concentration for 
-#non-detects
+#look for any duplicate data
+r = data_bound3 %>% 
+  count(sample_code, collection_date, analyte) %>% 
+  filter(n > 1)
+#868 duplicate sets, spans about 10 years of data. looked closer and appears to be across dsets, so likely
+#due to pull ins from across projects in WDL so duplicates in the pulls
+#some data like sample C0115B0058 appear in both dset3 & dset8 and both normal samples.
+#fix after splitting data based on max and non-detects for easier clean up
+
+#make results numeric class, remove "<" to assume result = RL (over estimate)
 data_bound_max <- mutate(data_bound3, result = as.numeric(result))
 
-#other dataframe to remove non-detects (reported as <RL) fully
+#other dataframe to remove non-detects fully (reported as <RL) 
 data_bound_nd <- data_bound3 %>%
   filter(!grepl("<", result, ignore.case = TRUE))
 
@@ -258,215 +266,79 @@ data_bound_nd <- mutate(data_bound_nd, result = as.numeric(result))
 
 #remove data within data_bound_nd where numerical result = RL
 data_bound_nd1 <- filter(data_bound_nd, result > rpt_limit)
-#removed 942 rows
+#removed 937 rows
 
-####### left off 2/27/2026, want to continue evaluation of these data and 
-#which made their way into the nutrient synth team's final data set
-#need to correct the data by 4.3 still
-#need to save this as a different datafile. 
+#pivot wider to group by sample ID, pick first instance of sample ID present to remove these dup values
 
-##################################################################
-### Evaluate paired data for Nitrate as N
-##################################################################
-
-dpaired <- read.csv("paired_nitrate_data.csv")
-dpaired <- clean_names(dpaired)
-names(dpaired)
-class(dpaired$result_diss_nitrate)
-
-dpaired_nitrate_adj <- dpaired %>%
-  mutate(
-    date = ymd(date),
-    date_time = ymd_hms(date_time),
-    nitrate_as_N = result_diss_nitrate / 4.3,
-    nitrate_RL_as_N = reporting_limit_diss_nitrate / 4.3
-  )
-
-#data visualization
-
-ggplot(dpaired_nitrate_adj, aes(x = station_number)) +
-  geom_point(
-    aes(
-      y = result_diss_nitrate,
-      color = "Dissolve Nitrate as NO3"
-    ),
-    alpha = 0.5
-  ) +
-  geom_point(
-    aes(
-      y = nitrate_as_N,
-      color = "Dissolve Nitrate as N"
-    ),
-    alpha = 0.5
-  ) +
-  geom_point(
-    aes(
-      y = result_diss_nitrate_nitrite,
-      color = "Dissolve Nitrate+Nitrite as N"
-    ),
-    alpha = 0.5
-  ) +
-  scale_color_manual(
-    values = c(
-      "Dissolve Nitrate as NO3" = "#1f77b4",
-      "Dissolve Nitrate as N" = "#d62728",
-      "Dissolve Nitrate+Nitrite as N" = "#9467bd"
-    )
-  ) +
-  labs(
-    x = "Station Number",
-    y = "Value",
-    color = "Legend",
-    title = "Overlay of Nitrate Results"
-  )
-
-dpaired_nitrate_adj_c <- dpaired_nitrate_adj %>%
-  # Remove rows where dissolved nitrate values are <RL
-  drop_na(result_diss_nitrate) %>%
-  # Replace dissolved nitrate + nitrite values that are <RL with their RL values
-  # to get a coarse idea of how they compare to the dissolved nitrate values
-  mutate(
-    result_diss_nitrate_nitrite = if_else(
-      detection_condition_diss_nitrate_nitrite == "Not Detected",
-      reporting_limit_diss_nitrate_nitrite,
-      result_diss_nitrate_nitrite
-    )
-  ) %>%
-  # Added some new categories here to differentiate N+N values <RL
-  mutate(
-    less_flag_new = case_when(
-      nitrate_as_N <= result_diss_nitrate_nitrite &
-        detection_condition_diss_nitrate_nitrite == "Detected" ~ "less",
-      nitrate_as_N <= result_diss_nitrate_nitrite &
-        detection_condition_diss_nitrate_nitrite ==
-        "Not Detected" ~ "less (using RL for N+N)",
-      nitrate_as_N > result_diss_nitrate_nitrite &
-        detection_condition_diss_nitrate_nitrite == "Detected" ~ "not less",
-      nitrate_as_N > result_diss_nitrate_nitrite &
-        detection_condition_diss_nitrate_nitrite ==
-        "Not Detected" ~ "not less (using RL for N+N)",
-      .default = NA_character_
-    ),
-    less_flag_orig = case_when(
-      result_diss_nitrate <= result_diss_nitrate_nitrite &
-        detection_condition_diss_nitrate_nitrite == "Detected" ~ "less",
-      result_diss_nitrate <= result_diss_nitrate_nitrite &
-        detection_condition_diss_nitrate_nitrite ==
-        "Not Detected" ~ "less (using RL for N+N)",
-      result_diss_nitrate > result_diss_nitrate_nitrite &
-        detection_condition_diss_nitrate_nitrite == "Detected" ~ "not less",
-      result_diss_nitrate > result_diss_nitrate_nitrite &
-        detection_condition_diss_nitrate_nitrite ==
-        "Not Detected" ~ "not less (using RL for N+N)",
-      .default = NA_character_
-    )
-  )
-
-
-#With the adjusted nitrate values (to report as N), 
-
-nitrate_as_n_summary <- dpaired_nitrate_adj_c %>%
-  count(less_flag_new, name = "n_records")
-
-nitrate_as_n_summary
-
-#less_flag_new n_records
-#1                        less      2223
-#2     less (using RL for N+N)        85
-#3                    not less      3381
-#4 not less (using RL for N+N)        54
-
-#now 3435 of 5743 samples have a higher value for nitrate than for nitrate + nitrite, 
-#so only 2308 show the expected relationship of nitrate + nitrite >= nitrate
-
-#now compare with original values for nitrate
-nitrate_as_n03_summary <- dpaired_nitrate_adj_c %>%
-  count(less_flag_orig, name = "n_records")
-
-nitrate_as_n03_summary
-
-#less_flag_orig n_records
-#1                        less         8
-#2                    not less      5596
-#3 not less (using RL for N+N)       139
-
-
-# With the original nitrate values when compared to their nitrate + nitrite counterparts,
-# 5735 out of 5743 samples had a higher value for nitrate than for nitrate + nitrite
-
-
-####################################################################################
-### Investigate nitrate adjusted values that are still higher than nitrate + nitrite
-####################################################################################
-
-
-#parse out these specific data into new df
-nitrate_adj1 <- filter(dpaired_nitrate_adj_c, less_flag_new == "not less" | less_flag_new == "not less (using RL for N+N)")
-
-unique(nitrate_adj1$method_diss_nitrate)
-#just shows EPA 300.0 as method, looks like method name standardized to 300.0 even if 300.0 28hold (mod method)
-
-#match up data, build up from scratch. back to data_bound1, to handle "<RL" values like done for dpaired data
-
-unique(data_bound1$analyte)
-
-data_bound2 <- filter(data_bound1, analyte == "Dissolved Nitrate + Nitrite" | analyte == "Dissolved Nitrate" )
-
-# Look for duplicates using analyte, sample code, and collection date as unique identifiers
-r = data_bound2 %>% 
-  count(sample_code, collection_date, analyte) %>% 
-  filter(n > 1)
-#2104 duplicates
-
-#some data like sample C0115B0058 appear in both dset3 & dset8 and both normal samples, just remove duplicates from now. 
-
-#pivot wider to group by sample ID, pick first instance of sample ID present to remove these 34 dup values
-
-data_bound_wide <- data_bound2 %>% 
+data_bound_max_wide <- data_bound_max %>% 
   pivot_wider(id_cols = c(sample_code, collection_date, station_number),
               names_from = analyte, values_from = c(rpt_limit, result, method),
               values_fill = NA, values_fn = first)
 
-r1 = data_bound_wide %>% 
+
+data_bound_max_wide<- clean_names(data_bound_max_wide)
+
+
+r1 = data_bound_max_wide %>% 
   count(sample_code, collection_date) %>% 
   filter(n > 1)
 #no more duplicates
 
-data_bound_wide <- clean_names(data_bound_wide)
-
-#clean up data by turning results into number they're less than
-
-data_bound_wide1 <- mutate(data_bound_wide, result_dissolved_nitrate = as.numeric(str_remove(result_dissolved_nitrate, "<")))
-#NAs introduced by coersion but not an issue for this purpose.
-
-data_bound_wide2 <- mutate(data_bound_wide1, result_dissolved_nitrate_nitrite = as.numeric(str_remove(result_dissolved_nitrate_nitrite, "<")))
-#NAs introduced by coersion but not an issue for this purpose.
-
-#remove NAs
-data_bound_wide3 <- data_bound_wide2 %>%
+#remove samples without both dissolved nitrate & dissolved nitrate + nitrite
+data_bound_max_wide1 <- data_bound_max_wide %>%
   drop_na(result_dissolved_nitrate) %>%
   drop_na(result_dissolved_nitrate_nitrite)
 
-dpaired_kr <- data_bound_wide3 %>%
+#adjust nitrate results and RL, all methods (EPA 300.0 and EPA 300.0 Mod) are reported with data "as NO3"
+data_bound_max_wide1_adj <- data_bound_max_wide1 %>%
   mutate(nitrate_as_N = result_dissolved_nitrate / 4.3,
          nitrate_RL_as_N = rpt_limit_dissolved_nitrate / 4.3)
 
-#evaluate data pairs (from scratch) by applying the flags as done for dpaired data
 
-dpaired_kr2 <- dpaired_kr %>%
+#pivot wider to group by sample ID, pick first instance of sample ID present to remove these dup values
+data_bound_nd1_wide <- data_bound_nd1 %>% 
+  pivot_wider(id_cols = c(sample_code, collection_date, station_number),
+              names_from = analyte, values_from = c(rpt_limit, result, method),
+              values_fill = NA, values_fn = first)
+
+data_bound_nd1_wide<- clean_names(data_bound_nd1_wide)
+
+r2 = data_bound_nd1_wide %>% 
+  count(sample_code, collection_date) %>% 
+  filter(n > 1)
+#no more duplicates
+
+#remove samples without both dissolved nitrate & dissolved nitrate + nitrite
+data_bound_nd1_wide1 <- data_bound_nd1_wide %>%
+  drop_na(result_dissolved_nitrate) %>%
+  drop_na(result_dissolved_nitrate_nitrite)
+
+#adjust nitrate results and RL, all methods (EPA 300.0 and EPA 300.0 Mod) are reported with data "as NO3"
+data_bound_nd1_wide1_adj <- data_bound_nd1_wide1 %>%
+  mutate(nitrate_as_N = result_dissolved_nitrate / 4.3,
+         nitrate_RL_as_N = rpt_limit_dissolved_nitrate / 4.3)
+
+
+####################################################################################
+### Analyze the data
+####################################################################################
+
+npair_max <- data_bound_max_wide1_adj %>%
   mutate(
     detection_condition_diss_nitrate_nitrite = 
       if_else(result_dissolved_nitrate_nitrite > rpt_limit_dissolved_nitrate_nitrite, "Detected",
               "Not Detected"))
 
 
-dpaired_kr3 <- dpaired_kr2 %>%
+npair_nd <- data_bound_nd1_wide1_adj %>%
   mutate(
-    detection_condition_diss_nitrate_adj= 
-      if_else(nitrate_as_N > nitrate_RL_as_N, "Detected",
+    detection_condition_diss_nitrate_nitrite = 
+      if_else(result_dissolved_nitrate_nitrite > rpt_limit_dissolved_nitrate_nitrite, "Detected",
               "Not Detected"))
+#check good, no data should be appearing here since non detects removed previously
 
-dpaired_kr4<- dpaired_kr3 %>%
+
+npair_max1<- npair_max %>%
   # Added some new categories here to differentiate N+N values <RL
   mutate(
     less_flag_new = case_when(
@@ -498,7 +370,40 @@ dpaired_kr4<- dpaired_kr3 %>%
   )
 
 
-nitrate_as_n_summary_kr <- dpaired_kr4 %>%
+npair_nd1<- npair_nd %>%
+  # Added some new categories here to differentiate N+N values <RL
+  mutate(
+    less_flag_new = case_when(
+      nitrate_as_N <= result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "less",
+      nitrate_as_N <= result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+        "Not Detected" ~ "less (using RL for N+N)",
+      nitrate_as_N > result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "not less",
+      nitrate_as_N > result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+        "Not Detected" ~ "not less (using RL for N+N)",
+      .default = NA_character_
+    ),
+    less_flag_orig = case_when(
+      result_dissolved_nitrate <= result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "less",
+      result_dissolved_nitrate <= result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+        "Not Detected" ~ "less (using RL for N+N)",
+      result_dissolved_nitrate > result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "not less",
+      result_dissolved_nitrate > result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+        "Not Detected" ~ "not less (using RL for N+N)",
+      .default = NA_character_
+    )
+  )
+
+
+#summarize data (max results)
+nitrate_as_n_max_summary <- npair_max1 %>%
   group_by(less_flag_new) %>%
   summarize(
     n_records  = n(),
@@ -507,18 +412,17 @@ nitrate_as_n_summary_kr <- dpaired_kr4 %>%
 
 #less_flag_new               n_records
 #<chr>                           <int>
-#1 less                             2281
-#2 less (using RL for N+N)           423
-#3 not less                         3481
-#4 not less (using RL for N+N)       572
+#1 less                             2229
+#2 less (using RL for N+N)             5
+#3 not less                         3368
+#4 not less (using RL for N+N)        15
+ 
 
+#With the adjusted nitrate values (to report as N) 
+#now 3383 of 5617 samples have a higher value for nitrate than for nitrate + nitrite, 
+#so only 2234 show that expected relationship.(~40%)
 
-#With the adjusted nitrate values (to report as N) from my recreation of paired dataframe
-#now 4053 of 6757 samples have a higher value for nitrate than for nitrate + nitrite, 
-#so only 2704 show that expected relationship.(40%)
-
-
-nitrate_as_no3_summary_kr <- dpaired_kr4 %>%
+nitrate_as_no3_max_summary <- npair_max1 %>%
   group_by(less_flag_orig) %>%
   summarize(
     n_records  = n(),
@@ -527,23 +431,60 @@ nitrate_as_no3_summary_kr <- dpaired_kr4 %>%
 
 #less_flag_orig              n_records
 #<chr>                           <int>
-#1 less                               23
-#2 less (using RL for N+N)             1
-#3 not less                         5739
-#4 not less (using RL for N+N)       994
+#1 less                                9
+#2 not less                         5588
+#3 not less (using RL for N+N)        20
+ 
+
+#With the original nitrate values when compared to their nitrate + nitrite counterparts, 
+#5608 out of 5617 samples had a higher value for nitrate than for nitrate + nitrite
+#only 9 samples show expected relationship (~0.02%)
 
 
-#With the original nitrate values when compared to their nitrate +nitrite counterparts, from my recreation of paired dataframe
-#6733 out of 6757 samples had a higher value for nitrate than for nitrate + nitrite
-#only 24 samples show expected relationship (0.3%)
+#summarize data (nd's removed)
+nitrate_as_n_nd_summary <- npair_nd1 %>%
+  group_by(less_flag_new) %>%
+  summarize(
+    n_records  = n(),
+    .groups = "drop"
+  )
 
+#less_flag_new n_records
+#<chr>             <int>
+#1 less               2106
+#2 not less           3338
+
+#With the adjusted nitrate values (to report as N) 
+#now 3338 of 5444 samples have a higher value for nitrate than for nitrate + nitrite, 
+#so only 2106 show that expected relationship.(~39%)
+
+nitrate_as_no3_nd_summary<- npair_nd1 %>%
+  group_by(less_flag_orig) %>%
+  summarize(
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+#less_flag_orig n_records
+#<chr>              <int>
+#1 less                   8
+#2 not less            5436
+
+#With the original nitrate values when compared to their nitrate + nitrite counterparts, 
+#5436 out of 5444 samples had a higher value for nitrate than for nitrate + nitrite
+#only 8 samples show expected relationship (~0.01%)
+
+
+######left off here 3/3/2026
 
 #parse out these specific data with adjusted nitrate values (to report as N) that are still higher into new df
-nitrate_as_n_kr_higher <- filter(dpaired_kr4, less_flag_new == "not less" | less_flag_new == "not less (using RL for N+N)")
-#4053, matches with above
+#use df with nds removed
+
+nitrate_as_n_higher <- filter(npair_nd1, less_flag_new == "not less")
+#3338, matches with above
 
 #summarize
-nitrate_as_n_kr_higher_summary <- nitrate_as_n_kr_higher %>%
+nitrate_as_n_higher_summary <- nitrate_as_n_higher %>%
   group_by(method_dissolved_nitrate) %>%
   summarize(
     first_used = min(collection_date, na.rm = TRUE),
@@ -554,12 +495,12 @@ nitrate_as_n_kr_higher_summary <- nitrate_as_n_kr_higher %>%
 
 #method_dissolved_nitrate first_used last_used  n_records
 #<chr>                    <date>     <date>         <int>
-#1 EPA 300.0 28d Hold [1]*  2010-01-04 2020-06-29      3763
-#2 EPA 300.0 [1]*           2011-11-14 2024-06-26       290
+#1 EPA 300.0 28d Hold [1]*  2010-01-04 2020-06-29      3064
+#2 EPA 300.0 [1]*           2020-07-21 2024-06-26       274
 
 
-#summarize, comparing overall method prevalence
-nitrate_summary_kr <- dpaired_kr4 %>%
+#summarize, comparing overall method prevalence for nitrate, 
+nitrate_summary <- npair_nd1 %>%
   group_by(method_dissolved_nitrate) %>%
   summarize(
     first_used = min(collection_date, na.rm = TRUE),
@@ -570,24 +511,63 @@ nitrate_summary_kr <- dpaired_kr4 %>%
 
 #method_dissolved_nitrate first_used last_used  n_records
 #<chr>                    <date>     <date>         <int>
-#1 EPA 300.0 28d Hold [1]*  2010-01-04 2020-07-15      5646
-#2 EPA 300.0 [1]*           2011-11-14 2024-06-26      1111
+#1 EPA 300.0 28d Hold [1]*  2010-01-04 2020-07-15      4659
+#2 EPA 300.0 [1]*           2020-07-20 2024-06-26       785
 
-#16% of samples analyzed by EPA 300.0 (unmodified). For those with a higher adj nitrate as N value,
-#7% were run by 300.0 (unmodified)
+#go back to before samples were removed due to no N+N data
 
-summary(dpaired_kr4$nitrate_as_N)
+#remove samples without dissolved nitrate 
+df <- data_bound_max_wide %>%
+  drop_na(result_dissolved_nitrate)
+
+nitrate_summary2 <- df %>%
+  group_by(method_dissolved_nitrate) %>%
+  summarize(
+    first_used = min(collection_date, na.rm = TRUE),
+    last_used  = max(collection_date, na.rm = TRUE),
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+#method_dissolved_nitrate first_used last_used  n_records
+#<chr>                    <date>     <date>         <int>
+#1 EPA 300.0 28d Hold [1]*  2010-01-04 2020-07-15      6003
+#2 EPA 300.0 [1]*           2011-11-15 2024-06-26       893
+
+
+#remove samples without both dissolved nitrate & dissolved nitrate + nitrite
+nitrate_summary3 <- data_bound_max_wide1_adj  %>%
+  group_by(method_dissolved_nitrate) %>%
+  summarize(
+    first_used = min(collection_date, na.rm = TRUE),
+    last_used  = max(collection_date, na.rm = TRUE),
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+#method_dissolved_nitrate first_used last_used  n_records
+#<chr>                    <date>     <date>         <int>
+#1 EPA 300.0 28d Hold [1]*  2010-01-04 2020-07-15      4827
+#2 EPA 300.0 [1]*           2011-11-15 2024-06-26       790
+
+#14% of samples analyzed for both Nitrate & N+N overall were run by 300.0 (unmodified)
+#13% of samples analyzed for Nitrate were run by EPA 300.0 (unmodified). 
+#For those with a higher adj nitrate as N value, where both Nitrate & N+N was run, 
+  # 8% of samples were run by EPA 300.0 (unmodified)
+
+summary(npair_nd1$nitrate_as_N)
 
 #Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-#0.00000 0.06977 0.23488 0.40248 0.53488 6.16279 
+#0.02791 0.16279 0.32558 0.48952 0.62791 6.16279 
 
-summary(nitrate_as_n_kr_higher$nitrate_as_N)
+summary(nitrate_as_n_higher$nitrate_as_N)
 #Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-#0.02326 0.09302 0.30233 0.45971 0.60465 5.34884 
+#0.04326 0.18605 0.41861 0.54817 0.69767 5.34884  
 
+##ranges are similar from overall as to when nitrate value is higher
 
 #visualize over time
-ggplot(dpaired_kr4, aes(x = collection_date)) +
+ggplot(npair_nd1, aes(x = collection_date)) +
   geom_freqpoly()+
   labs(
     title = "Frequency of total paired sample submissions",
@@ -595,7 +575,7 @@ ggplot(dpaired_kr4, aes(x = collection_date)) +
     y = "Sample Count"
   )
 
-ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
+ggplot(nitrate_as_n_higher, aes(x = collection_date)) +
   geom_freqpoly()+
   labs(
     title = "Frequency of total paired sample submissions, nitrate as n higher",
@@ -604,7 +584,7 @@ ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
   )
 
 #visualize over concentration
-ggplot(dpaired_kr4, aes(x = nitrate_as_N)) +
+ggplot(npair_nd1, aes(x = nitrate_as_N)) +
   geom_freqpoly()+
   labs(
     title = "Frequency of total paired samples by concentration",
@@ -612,7 +592,7 @@ ggplot(dpaired_kr4, aes(x = nitrate_as_N)) +
     y = "Sample Count"
   )
 
-ggplot(nitrate_as_n_kr_higher, aes(x = nitrate_as_N)) +
+ggplot(nitrate_as_n_higher, aes(x = nitrate_as_N)) +
   geom_freqpoly()+
   labs(
     title = "Frequency of paired sample submissions by concentration where nitrate as n higher",
@@ -622,7 +602,7 @@ ggplot(nitrate_as_n_kr_higher, aes(x = nitrate_as_N)) +
 
 
 # plot nitrate as n, still higher
-ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
+ggplot(nitrate_as_n_higher, aes(x = collection_date)) +
   geom_point(
     aes(
       y = result_dissolved_nitrate,
@@ -657,64 +637,13 @@ ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
     color = "Legend",
     title = "Overlay of Nitrate Results, where Nitrate as N > N+N"
   )
-
-#absolute difference calculation
-
-nitrate_as_n_kr_higher_ad <- nitrate_as_n_kr_higher %>%
-  mutate(
-    absolute_diff = 
-      nitrate_as_N - result_dissolved_nitrate_nitrite)
-
-#nitrate+nitrite data have two different reporting limits, separate data by RL
-
-ad_nn1 <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate_nitrite == "0.05" )
-#475 samples
-
-ad_nn2 <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate_nitrite == "0.01" )
-#3578 samples
-
-#diff on y axis, nitrate nitrite result on x axis
-a <- ggplot(ad_nn1, aes(x = result_dissolved_nitrate_nitrite)) +
-  geom_point(
-    aes(
-      y = absolute_diff,
-    ),
-    alpha = 0.5) +
-  geom_vline(aes(xintercept = rpt_limit_dissolved_nitrate_nitrite))+
-  labs(
-    x = "Result N+N",
-    y = "Absolute Diff (N adj)",
-    title = "Absolute Difference NO3 to N+N (N+N RL = 0.05 as N)"
-  )+
-  xlim(0, 1)+
-  ylim(0,0.25)
-#axis limits remove 42 data points
-
-a
-
-b <- ggplot(ad_nn2, aes(x = result_dissolved_nitrate_nitrite)) +
-  geom_point(
-    aes(
-      y = absolute_diff,
-    ),
-    alpha = 0.5) +
-  geom_vline(aes(xintercept = rpt_limit_dissolved_nitrate_nitrite))+
-  labs(
-    x = "Result N+N",
-    y = "Absolute Diff (N adj)",
-    title = "Absolute Difference NO3 to N+N (N+N RL = 0.01 as N)"
-  )+
-  xlim(0,2)+
-  ylim(0,1)
-b
-#axis limits remove 60 data points
-
-
-#********************************************
+####################################################################################
+### Analyze the data - nitrate RLs
+####################################################################################
 
 
 #summarize nitrate RLs, 
-nitrate_summary_RL <- nitrate_as_n_kr_higher_ad %>%
+nitrate_summary_RL <- nitrate_as_n_higher %>%
   group_by(nitrate_RL_as_N) %>%
   summarize(
     first_used = min(collection_date, na.rm = TRUE),
@@ -726,268 +655,62 @@ nitrate_summary_RL <- nitrate_as_n_kr_higher_ad %>%
 
 #nitrate_RL_as_N first_used last_used  n_records
 #<dbl> <date>     <date>         <int>
-#1          0.0233 2010-01-04 2024-06-26      3743
+#1          0.0233 2010-01-04 2024-06-26      3051
 #2          0.0465 2012-03-05 2018-12-17         8
 #3          0.0581 2010-10-05 2015-02-17        12
 #4          0.0698 2013-08-19 2023-11-21         7
 #5          0.0774 2010-01-05 2010-09-07        18
 #6          0.0872 2023-04-17 2023-04-17         1
-#7          0.116  2010-01-05 2024-03-19       158
+#7          0.116  2010-01-05 2024-03-19       156
 #8          0.174  2022-11-14 2024-02-20         9
-#9          0.233  2011-08-02 2024-04-17        61
-#10          0.349  2014-07-21 2018-02-20         3
-#11          0.465  2011-10-06 2015-10-21        19
-#12          0.581  2010-07-06 2018-06-05         8
-#13          1.16   2011-11-07 2018-08-20         3
-#14         NA      2018-03-27 2018-03-27         3
+#9          0.233  2013-03-04 2024-04-17        60
+#10         0.349  2014-05-05 2018-02-20         4
+#11         0.465  2011-10-06 2015-10-21         6
+#12         0.581  2014-03-19 2018-06-05         5
+#13         1.16   2018-08-20 2018-08-20         1
 
-
-#having issues with pulling in based on adjusted nitrate RL for some reason
-#may be due to very long numerical sequence and truncation
-#pulling in based on nitrate RL original (as NO3)
-
-ad_no3a <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate == "0.1" )
-#3743 samples
-
-ad_no3b <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate == "0.5")
-#158 samples
-
-ad_no3c <- filter(nitrate_as_n_kr_higher_ad, rpt_limit_dissolved_nitrate == "1")
-#61 samples
-
-
-#diff on y axis, nitrate (as N) result on x axis
-c <- ggplot(ad_no3a, aes(x = nitrate_as_N)) +
-  geom_point(
-    aes(
-      y = absolute_diff,
-    ),
-    alpha = 0.5) +
-  geom_vline(aes(xintercept = nitrate_RL_as_N))+
-  labs(
-    x = "Result Nitrate (as N)",
-    y = "Absolute Diff (N adj)",
-    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.023 as N)"
-  )+
-  xlim(0,2)+
-  ylim(0,1)
-
-c 
-#axis limits remove 75 data points
-
-#diff on y axis, nitrate (as N) result on x axis
-d <- ggplot(ad_no3b, aes(x = nitrate_as_N)) +
-  geom_point(
-    aes(
-      y = absolute_diff,
-    ),
-    alpha = 0.5) +
-  geom_vline(aes(xintercept = nitrate_RL_as_N))+
-  labs(
-    x = "Result Nitrate (as N)",
-    y = "Absolute Diff (N adj)",
-    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.11 as N)"
-  )+
-  xlim(0,2)+
-  ylim(0,0.5)
-
-
-d
-#axis limits remove 15 data points
-
-
-#diff on y axis, nitrate (as N) result on x axis
-e <- ggplot(ad_no3c, aes(x = nitrate_as_N)) +
-  geom_point(
-    aes(
-      y = absolute_diff,
-    ),
-    alpha = 0.5) +
-  geom_vline(aes(xintercept = nitrate_RL_as_N))+
-  labs(
-    x = "Result Nitrate (as N)",
-    y = "Absolute Diff (N adj)",
-    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.23 as N)"
-  )
-
-e + scale_x_continuous(breaks = seq(0, 4, by = 0.25))
-
-
-#look at data affected by being reported out as NO3 rather than N, AKA non-detects vs reported concentration
 
 
 ################################################################################
-### Total nitrogen via tkn analysis
+### Total nitrogen via tkn + (nitrate + nitrite) analysis
 ################################################################################
 
-################
-###data prep 
-################
-
-#group samples together and put in chronological order
-df1 <- data_bound_nitrate %>%
-  arrange(collection_date) %>%
-  group_by(short_station_name, station_number, sample_code, collection_date)
-
-#change any result values that are below reporting limit to NA. then remove any NA records.
-df2 <- df1 %>%
-  mutate(result = if_else(result < rpt_limit, NA_real_, result)) %>%
-  filter(!is.na(result))
-
-#retain samples that use tkn and are "normal samples" 
-tkn <- df2 %>%
-  ungroup() %>%
-  filter(
-    any(analyte == "Total Kjeldahl Nitrogen" &
-          sample_type == "Normal Sample"),
-    .by = c(station_number, collection_date)
-  ) %>%
-  filter(sample_type == "Normal Sample")
-
-#specify required analytes
-required_analytes <- c(
-  "Dissolved Nitrate + Nitrite",
-  "Total Kjeldahl Nitrogen",
-  "Dissolved Nitrate"
-)
+#remove samples with no TKN data
+#use df with non-detects removed
+total_n <- filter(data_bound_nd1_wide1_adj, result_total_kjeldahl_nitrogen != "")
+#5278 samples
 
 
+#remove tkn data where numerical result = RL
+total_n1 <- filter(total_n, result_total_kjeldahl_nitrogen > rpt_limit_total_kjeldahl_nitrogen)
+#no removals, all above RL
 
-#new df that retains just the required analytes for this analysis
-tkn2 <- tkn %>%
-  group_by(short_station_name, station_number, sample_code, collection_date) %>% #grouping by sample, so three analytes/rows per sample
-  filter(all(required_analytes %in% analyte)) %>% 
-  ungroup() %>%
-  filter(analyte %in% required_analytes) 
-
-#double check the numbers, should be 3 analytes per sample. anything extra needs to be reviewed
-tkn2 %>%
-  count(short_station_name, station_number, sample_code, collection_date) %>%
-  filter(n != 3) 
-#129 records
-
-#create list of sample specific analyte duplicates 
-dupes <- tkn2 %>%
-  group_by(short_station_name, station_number, sample_code, collection_date, analyte) %>%
-  filter(n() > 1) 
-#363 records
-
-#create df of duplicates with == result values
-matching_dupes <- dupes %>%
-  group_by(short_station_name, station_number, sample_code, collection_date, analyte) %>%
-  filter(n_distinct(result) == 1)
-#283 records 
-
-#examine the odd pairing in matching samples
-unpaired <- matching_dupes %>%
-  count(sample_code) %>%        
-  filter(n %% 2 == 1)           
-#sample CR0712B0939 has three dissolved nitrate records, all with the same value. no problem.
-
-#create df of duplicates with not exactly matching result values
-nonmatching_dupes <- dupes %>%
-  group_by(short_station_name, station_number, sample_code, collection_date, analyte) %>%
-  filter(n_distinct(result) > 1)
-#80 records -___-
-
-#create sample keys for nonmatching duplicates
-non_keys <- nonmatching_dupes %>%
-  distinct(short_station_name, station_number, sample_code, collection_date)
-
-#remove samples associated with nonmatching dupes
-tkn3 <- tkn2 %>%
-  anti_join(non_keys,
-            by = c("short_station_name", "station_number", "sample_code", "collection_date"))
-
-#keep one record per analyte dupe of the dupes that match
-matching_dupes2 <- matching_dupes %>%
-  group_by(short_station_name, station_number, sample_code, collection_date, analyte) %>%
-  slice(1) %>%   
-  ungroup()
-
-#remove original dupe records
-tkn_no_dupes <- tkn3 %>%
-  anti_join(dupes,
-            by = c("short_station_name", "station_number", "sample_code", "collection_date", "analyte"))
-
-#add back in the reduced matching dupes
-tkn4 <- bind_rows(tkn_no_dupes, matching_dupes2) %>%
-  arrange(short_station_name, station_number, collection_date, analyte)
-
-#confirm only 3 analytes per sample
-tkn4 %>%
-  count(short_station_name, station_number, sample_code, collection_date) %>%
-  filter(n != 3) #two samples that had both matching and non matching dupes slipped through the cracks
-
-#retain records with only the 3 analytes per sample.
-tkn5 <- tkn4 %>%
-  group_by(sample_code, collection_date) %>%
-  filter(n() == 3) %>%
-  ungroup()
-
-###########
-# the process above omits nonmatching duplicates(40) and their associated samples from this analysis.
-# I did this because I am short on time and the number of samples was negligible (about 300 records ~ 100 samples) :')
-# so roughly 5,463 samples to run the total nitrogen using tkn analysis.
-###########
-
-#data collected under EPA method 300 will be divided by a conversion factor of 4.3
-#this new value will be placed in a new column called result_convert and data outside of the 300 method
-#will retain their result values and be transferred to result_convert as is.
-tkn5 <- tkn5 %>%
-  mutate(
-    result_convert = case_when(
-      method %in% c("EPA 300.0 [1]*", "EPA 300.0 28d Hold [1]*") ~ result / 4.3,
-      TRUE ~ result
-    ),
-    result_convert = round(result_convert, 3) #three decimal places
-  ) %>%
-  relocate(result_convert, .after = result)
-
-
-#make a wide version
-tkn_wide <- tkn5 %>%
-  select(
-    station_number,
-    short_station_name,
-    collection_date,
-    sample_code,
-    analyte,
-    result_convert
-  ) %>%
-  pivot_wider(
-    names_from = analyte,
-    values_from = result_convert
-  )
-#clean names
-tkn_wide <- tkn_wide %>%
-  janitor::clean_names()
 
 #calculate total nitrogen, create comparison (tn_vs_nox) column & difference column
-tkn_wide <- tkn_wide %>%
+total_n2 <- total_n1 %>%
   mutate(
-    total_nitrogen = dissolved_total_kjeldahl_nitrogen +
-      dissolved_nitrate_nitrite,
-    tn_vs_nox = case_when(
-      total_nitrogen > dissolved_nitrate ~ "greater",
-      total_nitrogen < dissolved_nitrate ~ "less",
-      total_nitrogen == dissolved_nitrate ~ "equal",
+    total_nitrogen = result_total_kjeldahl_nitrogen +
+      result_dissolved_nitrate_nitrite,
+    tn_vs_no3 = case_when(
+      total_nitrogen > nitrate_as_N ~ "greater",
+      total_nitrogen < nitrate_as_N ~ "less",
+      total_nitrogen == nitrate_as_N ~ "equal",
       TRUE ~ NA_character_
     ),
-    difference = total_nitrogen - dissolved_nitrate
+    difference = total_nitrogen - nitrate_as_N
   )
 #summary
-tkn_wide %>%
-  count(tn_vs_nox)
-# greater      5411
-# less           50
-# equal           2
+total_n2 %>%
+  count(tn_vs_no3)
+# greater      5231
+# less           47
+# equal           0
 
-# so after dividing relevant samples by a 4.3 conversion factor and then calculating total nitrogen (tkn +(n03 +n02))
-# majority (5411) of samples had a calculated total nitrogen value that was greater than the dissolved nitrate value
-# 50 samples had a calculated total nitrogen value that was less than the dissolved nitrate value
-# 2 samples had equal values
+# so with the adjusted Nitrate as N results and then calculating total nitrogen (tkn +(n03 +n02))
+# majority (5231) of samples had a calculated total nitrogen value that was greater than the dissolved nitrate value
+# 47 samples had a calculated total nitrogen value that was less than the dissolved nitrate value
+# 0 samples had equal values
 
 
-#export to share 
-write.csv(tkn_wide, "tkn_wide.csv", row.names = FALSE)
+#export to Git
+write.csv(total_n2, "total_nitrogen.csv", row.names = FALSE)
