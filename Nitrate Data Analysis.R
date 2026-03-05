@@ -51,7 +51,6 @@ dset7 <- remove_dups(dset7)
 dset8 <- remove_dups(dset8)
 
 
-
 #####################################################
 ### Format and manipulate WDL and Lab data
 #####################################################
@@ -805,16 +804,17 @@ e <- ggplot(npair_max1_ad__nitrate_rl3, aes(x = nitrate_as_N)) +
     x = "Result Nitrate (as N)",
     y = "Absolute Diff (N adj)",
     title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.23 as N)"
-  )
+  )+
+  xlim(0,2)+
+  ylim(0,0.5)
 
-e + scale_x_continuous(breaks = seq(0, 4, by = 0.25))
+e
+
 #some data excluded, likely due to absolute differences of zero since this is the max df
 
 ######relative percent difference calculation, using max values
 
 # perform RPD calculation
-
-
 
 npair_max1_rpd  <- npair_max1 %>% 
   mutate(rpd =  100 * ((nitrate_as_N - result_dissolved_nitrate_nitrite) / ((nitrate_as_N + result_dissolved_nitrate_nitrite) / 2)))
