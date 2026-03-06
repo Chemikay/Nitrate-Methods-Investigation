@@ -482,6 +482,7 @@ nitrate_as_no3_summary_kr <- dpaired_kr4 %>%
 #6733 out of 6757 samples had a higher value for nitrate than for nitrate + nitrite
 #only 24 samples show expected relationship (0.3%)
 
+#match up data, build up from scratch. back to data_bound1, to handle "<RL" values like done for dpaired data
 
 #parse out these specific data with adjusted nitrate values (to report as N) that are still higher into new df
 nitrate_as_n_kr_higher <- filter(dpaired_kr4, less_flag_new == "not less" | less_flag_new == "not less (using RL for N+N)")
@@ -757,6 +758,758 @@ e <- ggplot(ad_no3c, aes(x = nitrate_as_N)) +
 
 e + scale_x_continuous(breaks = seq(0, 4, by = 0.25))
 
+data_bound2 <- filter(data_bound1, analyte == "Dissolved Nitrate + Nitrite" | analyte == "Dissolved Nitrate" )
 
+# Look for duplicates using analyte, sample code, and collection date as unique identifiers
+r = data_bound2 %>% 
+  count(sample_code, collection_date, analyte) %>% 
+  filter(n > 1)
+#2104 duplicates
+
+#some data like sample C0115B0058 appear in both dset3 & dset8 and both normal samples, just remove duplicates from now. 
+
+#pivot wider to group by sample ID, pick first instance of sample ID present to remove these 34 dup values
+
+data_bound_wide <- data_bound2 %>% 
+  pivot_wider(id_cols = c(sample_code, collection_date, station_number),
+              names_from = analyte, values_from = c(rpt_limit, result, method),
+              values_fill = NA, values_fn = first)
+
+r1 = data_bound_wide %>% 
+  count(sample_code, collection_date) %>% 
+  filter(n > 1)
+#no more duplicates
+
+data_bound_wide <- clean_names(data_bound_wide)
+
+#clean up data by turning results into number they're less than
+
+data_bound_wide1 <- mutate(data_bound_wide, result_dissolved_nitrate = as.numeric(str_remove(result_dissolved_nitrate, "<")))
+#NAs introduced by coersion but not an issue for this purpose.
+
+data_bound_wide2 <- mutate(data_bound_wide1, result_dissolved_nitrate_nitrite = as.numeric(str_remove(result_dissolved_nitrate_nitrite, "<")))
+#NAs introduced by coersion but not an issue for this purpose.
+
+#remove NAs
+data_bound_wide3 <- data_bound_wide2 %>%
+  drop_na(result_dissolved_nitrate) %>%
+  drop_na(result_dissolved_nitrate_nitrite)
+
+dpaired_kr <- data_bound_wide3 %>%
+  mutate(nitrate_as_N = result_dissolved_nitrate / 4.3,
+         nitrate_RL_as_N = rpt_limit_dissolved_nitrate / 4.3)
+
+#evaluate data pairs (from scratch) by applying the flags as done for dpaired data
+
+dpaired_kr2 <- dpaired_kr %>%
+  mutate(
+    detection_condition_diss_nitrate_nitrite = 
+      if_else(result_dissolved_nitrate_nitrite > rpt_limit_dissolved_nitrate_nitrite, "Detected",
+              "Not Detected"))
+
+
+dpaired_kr3 <- dpaired_kr2 %>%
+  mutate(
+    detection_condition_diss_nitrate_adj= 
+      if_else(nitrate_as_N > nitrate_RL_as_N, "Detected",
+              "Not Detected"))
+  
+dpaired_kr4<- dpaired_kr3 %>%
+  # Added some new categories here to differentiate N+N values <RL
+  mutate(
+    less_flag_new = case_when(
+      nitrate_as_N <= result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "less",
+      nitrate_as_N <= result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+        "Not Detected" ~ "less (using RL for N+N)",
+      nitrate_as_N > result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "not less",
+      nitrate_as_N > result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+        "Not Detected" ~ "not less (using RL for N+N)",
+      .default = NA_character_
+    ),
+    less_flag_orig = case_when(
+      result_dissolved_nitrate <= result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "less",
+      result_dissolved_nitrate <= result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+        "Not Detected" ~ "less (using RL for N+N)",
+      result_dissolved_nitrate > result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite == "Detected" ~ "not less",
+      result_dissolved_nitrate > result_dissolved_nitrate_nitrite &
+        detection_condition_diss_nitrate_nitrite ==
+        "Not Detected" ~ "not less (using RL for N+N)",
+      .default = NA_character_
+    )
+  )
+
+
+nitrate_as_n_summary_kr <- dpaired_kr4 %>%
+  group_by(less_flag_new) %>%
+  summarize(
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+#less_flag_new               n_records
+#<chr>                           <int>
+#1 less                             2281
+#2 less (using RL for N+N)           423
+#3 not less                         3481
+#4 not less (using RL for N+N)       572
+ 
+
+#With the adjusted nitrate values (to report as N) from my recreation of paired dataframe
+#now 4053 of 6757 samples have a higher value for nitrate than for nitrate + nitrite, 
+#so only 2704 show that expected relationship.(40%)
+
+
+nitrate_as_no3_summary_kr <- dpaired_kr4 %>%
+  group_by(less_flag_orig) %>%
+  summarize(
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+#less_flag_orig              n_records
+#<chr>                           <int>
+#1 less                               23
+#2 less (using RL for N+N)             1
+#3 not less                         5739
+#4 not less (using RL for N+N)       994
+
+
+#With the original nitrate values when compared to their nitrate +nitrite counterparts, from my recreation of paired dataframe
+#6733 out of 6757 samples had a higher value for nitrate than for nitrate + nitrite
+#only 24 samples show expected relationship (0.3%)
+
+
+#parse out these specific data with adjusted nitrate values (to report as N) that are still higher into new df
+nitrate_as_n_kr_higher <- filter(dpaired_kr4, less_flag_new == "not less" | less_flag_new == "not less (using RL for N+N)")
+#4053, matches with above
+
+#summarize
+nitrate_as_n_kr_higher_summary <- nitrate_as_n_kr_higher %>%
+  group_by(method_dissolved_nitrate) %>%
+  summarize(
+    first_used = min(collection_date, na.rm = TRUE),
+    last_used  = max(collection_date, na.rm = TRUE),
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+#method_dissolved_nitrate first_used last_used  n_records
+#<chr>                    <date>     <date>         <int>
+#1 EPA 300.0 28d Hold [1]*  2010-01-04 2020-06-29      3763
+#2 EPA 300.0 [1]*           2011-11-14 2024-06-26       290
+ 
+
+#summarize, comparing overall method prevalence
+nitrate_summary_kr <- dpaired_kr4 %>%
+  group_by(method_dissolved_nitrate) %>%
+  summarize(
+    first_used = min(collection_date, na.rm = TRUE),
+    last_used  = max(collection_date, na.rm = TRUE),
+    n_records  = n(),
+    .groups = "drop"
+  )
+
+#method_dissolved_nitrate first_used last_used  n_records
+#<chr>                    <date>     <date>         <int>
+#1 EPA 300.0 28d Hold [1]*  2010-01-04 2020-07-15      5646
+#2 EPA 300.0 [1]*           2011-11-14 2024-06-26      1111
+
+#16% of samples analyzed by EPA 300.0 (unmodified). For those with a higher adj nitrate as N value,
+#7% were run by 300.0 (unmodified)
+
+summary(dpaired_kr4$nitrate_as_N)
+
+#Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#0.00000 0.06977 0.23488 0.40248 0.53488 6.16279 
+
+summary(nitrate_as_n_kr_higher$nitrate_as_N)
+#Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#0.02326 0.09302 0.30233 0.45971 0.60465 5.34884 
+
+
+#visualize over time
+ggplot(dpaired_kr4, aes(x = collection_date)) +
+  geom_freqpoly()+
+  labs(
+    title = "Frequency of total paired sample submissions",
+    x = "Collection Date",
+    y = "Sample Count"
+  )
+
+ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
+  geom_freqpoly()+
+  labs(
+    title = "Frequency of total paired sample submissions, nitrate as n higher",
+    x = "Collection Date",
+    y = "Sample Count"
+  )
+
+#visualize over concentration
+ggplot(dpaired_kr4, aes(x = nitrate_as_N)) +
+  geom_freqpoly()+
+  labs(
+    title = "Frequency of total paired samples by concentration",
+    x = "Nitrate as N",
+    y = "Sample Count"
+  )
+
+ggplot(nitrate_as_n_kr_higher, aes(x = nitrate_as_N)) +
+  geom_freqpoly()+
+  labs(
+    title = "Frequency of paired sample submissions by concentration where nitrate as n higher",
+    x = "Nitrate as N",
+    y = "Sample Count"
+  )
+
+
+# plot nitrate as n, still higher
+ggplot(nitrate_as_n_kr_higher, aes(x = collection_date)) +
+  geom_point(
+    aes(
+      y = result_dissolved_nitrate,
+      color = "Dissolve Nitrate as NO3"
+    ),
+    alpha = 0.5
+  ) +
+  geom_point(
+    aes(
+      y = nitrate_as_N,
+      color = "Dissolve Nitrate as N"
+    ),
+    alpha = 0.5
+  ) +
+  geom_point(
+    aes(
+      y = result_dissolved_nitrate_nitrite,
+      color = "Dissolve Nitrate+Nitrite as N"
+    ),
+    alpha = 0.5
+  ) +
+  scale_color_manual(
+    values = c(
+      "Dissolve Nitrate as NO3" = "#1f77b4",
+      "Dissolve Nitrate as N" = "#d62728",
+      "Dissolve Nitrate+Nitrite as N" = "#9467bd"
+    )
+  ) +
+  labs(
+    x = "Collection Date",
+    y = "Value",
+    color = "Legend",
+    title = "Overlay of Nitrate Results, where Nitrate as N > N+N"
+  )
+
+#absolute difference calculation
+
+nitrate_as_n_kr_higher_ad <- nitrate_as_n_kr_higher %>%
+  mutate(
+    total_nitrogen = total_kjeldahl_nitrogen +
+      dissolved_nitrate_nitrite,
+    tn_vs_nox = case_when(
+      total_nitrogen > dissolved_nitrate ~ "greater",
+      total_nitrogen < dissolved_nitrate ~ "less",
+      total_nitrogen == dissolved_nitrate ~ "equal",
+      TRUE ~ NA_character_
+    ),
+    alpha = 0.5) +
+  geom_vline(aes(xintercept = nitrate_RL_as_N))+
+  labs(
+    x = "Result Nitrate (as N)",
+    y = "Absolute Diff (N adj)",
+    title = "Absolute Difference NO3 to N+N (Nitrate RL = 0.23 as N)"
+  )
+
+e + scale_x_continuous(breaks = seq(0, 4, by = 0.25))
+
+
+#export to share 
+write.csv(tkn_wide, "tkn_wide.csv", row.names = FALSE)
+
+
+####################
+### USGS Comparison ************************************************************
+####################
+
+#plotting libraries
+library(ggplot2)
+library(plotly)
+library(htmlwidgets)
+
+
+#data import
+#DWR data 
+dwr1 <- read.csv("df1.csv") %>%
+  filter(sample_type == "Normal Sample") %>% #keep only Normal Samples
+  filter(!grepl("N\\.S\\.|<", result)) %>% #remove rows where result contains N.S. or <
+  mutate(
+    result = as.numeric(result)   #convert result field to numeric
+  ) %>%
+  filter(result >= rpt_limit) %>% #remove rows where result is less than rpt_limit 
+  mutate(agency = "DWR") #add agency column
+
+#filter to just station C10 Vernalis data
+dwr2 <- dwr1 %>%
+  filter(short_station_name == "C10A")
+
+#filter to just station C3A Hood data
+dwr3 <- dwr1 %>%
+  filter(short_station_name == "C3A - Hood")
+
+#USGS data
+#vector of nutrient specific USGS pcodes that are similar to DWR
+usgs_pcodes  <- c(
+  618, 631
+)
+
+#USGS Vernalis data ******************************************************
+usgs1 <- read.csv("USGS Vernalis.csv") %>%
+  #keep only nitrogen pcodes that are similar to the two methods in the DWR data.
+  filter(USGSpcode %in% usgs_pcodes) %>%
+  
+  #keep relevant columns
+  select(
+    Location_Identifier,
+    Location_Name,
+    Activity_StartDate,
+    Activity_StartTime,
+    Result_Characteristic,
+    Result_Measure,
+    Result_MeasureUnit,
+    Result_MeasureStatusIdentifier,
+    Result_MeasureType,
+    USGSpcode
+  ) %>%
+  rename(
+    collection_date = Activity_StartDate,
+    analyte = Result_Characteristic,
+    result = Result_Measure,
+    units = Result_MeasureUnit,
+    long_station_name = Location_Name
+  ) %>%
+  mutate(agency = "USGS")
+#make a sample_code column for usgs data
+usgs1 <- usgs1 %>%
+  mutate(
+    sample_code = paste(Location_Identifier, collection_date, sep = "_")
+  )
+#correct units column based on USGS p codes
+usgs1$units <- "mg/L as N"
+
+###Freeport discrete data*****************************************************
+usgs2 <- read.csv("USGS Freeport.csv")%>%
+  #keep only nitrogen pcodes that are similar to the two methods in the DWR data.
+  filter(USGSpcode %in% usgs_pcodes) %>%
+  
+  #keep relevant columns
+  select(
+    Location_Identifier,
+    Location_Name,
+    Activity_StartDate,
+    Activity_StartTime,
+    Result_Characteristic,
+    Result_Measure,
+    Result_MeasureUnit,
+    Result_MeasureStatusIdentifier,
+    Result_MeasureType,
+    USGSpcode
+  ) %>%
+  rename(
+    collection_date = Activity_StartDate,
+    analyte = Result_Characteristic,
+    result = Result_Measure,
+    units = Result_MeasureUnit,
+    long_station_name = Location_Name
+  ) %>%
+  mutate(agency = "USGS")
+#make a sample_code column for usgs data
+usgs2 <- usgs2 %>%
+  mutate(
+    sample_code = paste(Location_Identifier, collection_date, sep = "_")
+  )
+#correct units column based on USGS p codes
+usgs2$units <- "mg/L as N"
+
+#remove NA values
+usgs2 <- usgs2 %>% 
+  filter(!is.na(result))
+
+###Freeport realtime data ****************************************************
+
+#create import specs for columns
+colspec <- cols(
+  id = col_character(),
+  time_series_id = col_character(),
+  monitoring_location_id = col_character(),
+  statistic_id = col_character(),
+  unit_of_measure = col_character(),
+  approval_status = col_character(),
+  qualifier = col_character(),
+  parameter_code = col_double(),
+  value = col_double(),
+  x = col_logical(),
+  y = col_logical(),
+  time = col_character(),          
+  last_modified = col_character()  
+)
+#make list
+df_list <- list(
+  read_csv("Freeport 1.csv", col_types = colspec),
+  read_csv("Freeport 2.csv", col_types = colspec),
+  read_csv("Freeport 3.csv", col_types = colspec),
+  read_csv("Freeport 4.csv", col_types = colspec)
+)
+#bind into one df
+freeport <- bind_rows(df_list)
+#change date/time
+freeport <- freeport %>%
+  mutate(time = ymd_hms(time, tz = "UTC")) %>%
+  arrange(time)
+
+#rename and reformat dates
+freeport <- freeport %>%
+  mutate(collection_date = as.character(as.Date(time)))
+#rename
+freeport <- freeport %>%
+  rename(
+    long_station_name = monitoring_location_id,
+    analyte = statistic_id,
+    result = value,
+    units = unit_of_measure
+  )
+#agency column
+freeport <- freeport %>%
+  mutate(agency = "USGS")
+
+freeport <- freeport %>%
+  mutate(analyte = "Nitrate + Nitrite mg/L as N (insitu)")
+
+
+#reduce real time data down to daily averages
+freeport2 <- freeport %>%
+  group_by(collection_date) %>%
+  summarise(
+    long_station_name = first(long_station_name),
+    analyte = first(analyte),
+    result = first(result),
+    units = first(units),
+    agency = first(agency),
+    daily_avg_value = mean(result, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+####################
+#Vernalis comparison *********************************************************
+####################
+
+#how many dates appear in both datasets
+shared_dates <- intersect(dwr2$collection_date, usgs1$collection_date)
+
+dwr_match <- dwr2 %>%
+  filter(collection_date %in% shared_dates)
+
+usgs_match <- usgs1 %>%
+  filter(collection_date %in% shared_dates)
+
+#combine matched data onto one df
+combo1 <- bind_rows(
+  dwr_match %>%
+    select(long_station_name, collection_date, sample_code, analyte, result, units, agency),
+  
+  usgs_match %>%
+    select(long_station_name, collection_date, sample_code, analyte, result, units, agency)
+)
+
+#factor agency and analyte for plotting
+combo1 <- combo1 %>%
+  mutate(
+    agency = factor(agency, levels = c("USGS", "DWR")),
+    analyte = factor(analyte)
+  )
+################################################
+#Vernalis plot with converted DWR nitrate values*****
+################################################
+
+#prepare data
+combo_plot <- combo1 %>%
+  mutate(
+    analyte_label = paste0(analyte, " (", units, ")"),
+    analyte_label = factor(analyte_label),
+    analyte = factor(analyte),
+    agency = factor(agency, levels = c("USGS", "DWR"))
+  )
+
+#create converted DWR nitrate rows
+converted_rows <- combo_plot %>%
+  filter(agency == "DWR", analyte == "Dissolved Nitrate") %>%
+  mutate(
+    result = result / 4.3,          
+    agency = "DWR_Nitrate/4.3"        
+  )
+
+combo_plot2 <- bind_rows(combo_plot, converted_rows) %>%
+  filter(!(agency == "DWR" & analyte == "Dissolved Nitrate")) %>%
+  mutate(
+    agency = factor(agency, levels = c("USGS", "DWR", "DWR_Nitrate/4.3"))
+  )
+
+
+#build dot plot
+vernalis <- ggplot(combo_plot2, aes(
+  x = collection_date,
+  y = result,
+  shape = analyte_label,
+  color = agency
+)) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c(
+      "USGS" = "darkorchid",
+      "DWR"  = "dodgerblue",
+      "DWR_Nitrate/4.3" = "dodgerblue"   
+    )
+  ) +
+  scale_shape_manual(values = c(5, 4, 3, 1)) +
+  labs(
+    x = "Collection Date",
+    y = "Result Values",
+    color = "Agency",
+    shape = "Analyte (Units)",
+    title = "DWR & USGS Nitrogen Measurements at Vernalis"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+vernalis
+
+#Interactive plot
+#make into an interactive plot for a quick and easy way to explore the data
+vp <- ggplotly(
+  vernalis,
+  tooltip = c("collection_date", "result", "analyte_label", "agency", "sample_code")
+)
+
+#save to temporary HTML and open in browser
+tmpfile <- tempfile(fileext = ".html")
+saveWidget(vp, tmpfile, selfcontained = TRUE)
+browseURL(tmpfile)
+
+##############################
+###Hood & Freeport comparison ************************************************
+##############################
+
+#Discrete 
+#how many dates appear in both datasets
+shared_dates2 <- intersect(dwr3$collection_date, usgs2$collection_date)
+
+dwr_match2 <- dwr3 %>%
+  filter(collection_date %in% shared_dates2) #35 records
+
+usgs_match2 <- usgs2 %>%
+  filter(collection_date %in% shared_dates2) #44 records 
+
+#combine matched data onto one df
+combo2 <- bind_rows(
+  dwr_match2 %>%
+    select(long_station_name, collection_date, analyte, result, units, agency),
+  
+  usgs_match2 %>%
+    select(long_station_name, collection_date, analyte, result, units, agency)
+)
+
+#factor agency and analyte for plotting
+combo2 <- combo2 %>%
+  mutate(
+    agency = factor(agency, levels = c("USGS", "DWR")),
+    analyte = factor(analyte)
+  )
+##############
+#discrete plot*****
+##############
+
+#prepare data
+combo_plot3 <- combo2 %>%
+  mutate(
+    analyte_label = paste0(analyte, " (", units, ")"),
+    analyte_label = factor(analyte_label),
+    analyte = factor(analyte),
+    agency = factor(agency, levels = c("USGS", "DWR"))
+  )
+
+combo2_check <- combo2 %>%
+  group_by(collection_date) %>%
+  summarise(
+    agencies_present = n_distinct(agency),
+    agency_list = paste(sort(unique(agency)), collapse = ", "),
+    .groups = "drop"
+  )
+
+#create converted DWR nitrate rows
+converted_rows2 <- combo_plot3 %>%
+  filter(agency == "DWR", analyte == "Dissolved Nitrate") %>%
+  mutate(
+    result = result / 4.3,          
+    agency = "DWR_Nitrate/4.3"        
+  )
+combo_plot4 <- bind_rows(combo_plot3, converted_rows2) %>%
+  filter(!(agency == "DWR" & analyte == "Dissolved Nitrate")) %>%
+  mutate(
+    agency = factor(agency, levels = c("USGS", "DWR", "DWR_Nitrate/4.3"))
+  )
+
+#build dot plot
+hood_freeport <- ggplot(combo_plot4, aes(
+  x = collection_date,
+  y = result,
+  shape = analyte_label,
+  color = agency
+)) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c(
+      "USGS" = "darkorchid",
+      "DWR"  = "dodgerblue",
+      "DWR_Nitrate/4.3" = "dodgerblue"   
+    )
+  ) +
+  scale_shape_manual(values = c(5, 4, 3, 1)) +
+  labs(
+    x = "Collection Date",
+    y = "Result Values",
+    color = "Agency",
+    shape = "Analyte (Units)",
+    title = "DWR & USGS Nitrogen Measurements at Hood & Freeport"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+hood_freeport
+
+#interactive plot
+hfp <- ggplotly(
+  hood_freeport,
+  tooltip = c("collection_date", "result", "analyte_label", "agency", "sample_code")
+)
+
+#save to temporary HTML and open in browser
+tmpfile <- tempfile(fileext = ".html")
+saveWidget(hfp, tmpfile, selfcontained = TRUE)
+browseURL(tmpfile)
+
+#######################################################
+#real time data (USGS real time nitrate + nitrite data)*************************
+#######################################################
+
+#how many dates appear in both datasets
+shared_dates3 <- intersect(dwr3$collection_date, freeport2$collection_date)
+
+dwr_match3 <- dwr3 %>%
+  filter(collection_date %in% shared_dates3) #167
+
+usgs_match3 <- freeport2 %>%
+  filter(collection_date %in% shared_dates3) #94
+
+#combine matched data onto one df
+combo3 <- bind_rows(
+  dwr_match3 %>%
+    select(long_station_name, collection_date, analyte, result, units, agency),
+  
+  usgs_match3 %>%
+    select(long_station_name, collection_date, analyte, result, units, agency)
+)
+
+#factor agency and analyte for plotting
+combo3 <- combo3 %>%
+  mutate(
+    agency = factor(agency, levels = c("USGS", "DWR")),
+    analyte = factor(analyte)
+  )
+###########################################
+#realtime (freeport) & discrete (Hood) plot*****
+###########################################
+#prepare data
+combo_plot5 <- combo3 %>%
+  mutate(
+    analyte_label = paste0(analyte, " (", units, ")"),
+    analyte_label = factor(analyte_label),
+    analyte = factor(analyte),
+    agency = factor(agency, levels = c("USGS", "DWR"))
+  )
+
+combo3_check <- combo3 %>%
+  group_by(collection_date) %>%
+  summarise(
+    agencies_present = n_distinct(agency),
+    agency_list = paste(sort(unique(agency)), collapse = ", "),
+    .groups = "drop"
+  )
+
+#create converted DWR nitrate rows
+converted_rows3 <- combo_plot5 %>%
+  filter(agency == "DWR", analyte == "Dissolved Nitrate") %>%
+  mutate(
+    result = result / 4.3,          
+    agency = "DWR_Nitrate/4.3"        
+  )
+combo_plot6 <- bind_rows(combo_plot5, converted_rows2) %>%
+  filter(!(agency == "DWR" & analyte == "Dissolved Nitrate")) %>%
+  mutate(
+    agency = factor(agency, levels = c("USGS", "DWR", "DWR_Nitrate/4.3"))
+  )
+
+
+#build point plot
+hood_freeport2 <- ggplot(combo_plot6, aes(
+  x = collection_date,
+  y = result,
+  shape = analyte_label,
+  color = agency
+)) +
+  geom_point(size = 3) +
+  scale_color_manual(
+    values = c(
+      "USGS" = "darkorchid",
+      "DWR"  = "dodgerblue",
+      "DWR_Nitrate/4.3" = "dodgerblue"   
+    )
+  ) +
+  scale_shape_manual(values = c(5, 4, 3, 1)) +
+  labs(
+    x = "Collection Date",
+    y = "Result Values",
+    color = "Agency",
+    shape = "Analyte (Units)",
+    title = "DWR & USGS Nitrogen measurements at Hood & Freeport (USGS realtime daily averages)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+hood_freeport2
+
+#interactive plot
+hfp2 <- ggplotly(
+  hood_freeport2,
+  tooltip = c("collection_date", "result", "analyte_label", "agency", "sample_code")
+)
+
+#save to temporary HTML and open in browser
+tmpfile <- tempfile(fileext = ".html")
+saveWidget(hfp2, tmpfile, selfcontained = TRUE)
+browseURL(tmpfile)
 #look at data affected by being reported out as NO3 rather than N, AKA non-detects vs reported concentration
 
